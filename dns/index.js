@@ -59,24 +59,32 @@ async function connectToMongo() {
 }
 
 async function isOffensive(query) {
-    const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [{
-                "role": "user",
-                "content": [{
-                    "type": "text",
-                    "text": "I need you to reply with \"yes\" and \"no\" only.\n\nYour task is to tell me if this domain name is offensive (i.e. it's vulgar, racist, dicriminating).\n\nDomain: " + query + "\n"
-                }]
-            },
-        ],
-        temperature: 1,
-        max_tokens: 10,
-        top_p: 1,
-        frequency_penalty: 0,
-        presence_penalty: 0,
-    });
+    if (typeof query !== 'string' || query.length > 100) {
+        return true; 
+    } // Obviously consider too long queries as "offensive".
+      // Users can generate long queries that will take up excessive time and resources for GPT to process, though I guess not much of a ..
+      // problem its still important to not give anyone too much room to mess around.
 
-    response?.choices?.[0]?.message == "Yes"
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{
+                role: "user",
+                content: "I need you to reply with \"yes\" and \"no\" only.\n\nYour task is to tell me if this domain name is offensive (i.e. it's vulgar, racist, dicriminating).\n\nDomain: " + query + "\n"
+            }],
+            max_tokens: 10,
+            temperature: 0.2,       // Lower temp for consistent responses as the higher the more "random". (Change this how you want I'd just recommend it more consistent)
+            top_p: 1,
+            frequency_penalty: 0,
+            presence_penalty: 0,
+
+        });
+
+        return response.choices[0].message.content.trim().toLowerCase() === 'yes'; // Turn result to lower case so the "yes" isn't ignored due to case sensitivity - also trimming away empty spaces cause why not.
+    } catch (error) {
+        console.error('Error checking domain name:', error);
+        return true; // Consider any API error as an offensive response.
+    }
 }
 
 connectToMongo().catch(console.error);
@@ -121,8 +129,8 @@ app.post('/domain', async (req, res) => {
             return res.status(409).send();
         }
 
-        const is_offensive = isOffensive(newDomain.name + '.' + newDomain.tld);
-
+        const is_offensive = await isOffensive(newDomain.name + '.' + newDomain.tld); // Await function to wait for GPT's answer. The original code doesn't have this ..
+                                                                                      // and can thus be exploited as GPT can error or take time to process.
         if (is_offensive) {
             return res.status(400).send("The given domain is offensive.")
         }
